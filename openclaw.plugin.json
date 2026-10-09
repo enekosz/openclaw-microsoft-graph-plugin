@@ -2,7 +2,7 @@
   "id": "microsoft-graph",
   "name": "Connect Microsoft 365 to OpenClaw",
   "description": "Bring Outlook mail and calendar, OneDrive files, and Microsoft To Do into OpenClaw with per-agent access you control.",
-  "version": "3.12.1",
+  "version": "3.12.2",
   "categories": [
     "productivity"
   ],
@@ -19,6 +19,13 @@
       "enabled": {
         "type": "boolean",
         "default": false
+      },
+      "expectedUserPrincipalName": {
+        "type": "string",
+        "minLength": 3,
+        "maxLength": 320,
+        "pattern": "^[^@\\s]+@[^@\\s]+$",
+        "description": "Fail closed unless Microsoft Graph /me resolves to this exact delegated user principal name or mail address. Account-bound connections also require User.Read."
       },
       "warningApprovalsRequired": {
         "type": "boolean",

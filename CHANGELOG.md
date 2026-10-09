@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## 3.12.2 - 2026-10-09
+
+- Add optional `expectedUserPrincipalName` account binding. Bound installations
+  request `User.Read`, verify Microsoft Graph `/me` before any Calendar, Mail,
+  To Do or OneDrive operation, and fail closed on a different delegated user.
+- Cache the verified identity per access token to keep the steady-state path
+  fast, and include the verified Microsoft identity in successful results so
+  downstream receipts can prove both the operation and its account boundary.
+
 ## 3.12.0 - 2026-10-07
 
 - Integrate the authenticated Native OS/Gemacode socket boundary and one-use

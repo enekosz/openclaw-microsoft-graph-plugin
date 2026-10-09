@@ -9,7 +9,7 @@ import { validatePolicy, type GraphPolicy } from "./policy.js";
 import { DeviceCodeSignIn } from "./device-code.js";
 import { isMicrosoftDeviceVerificationUri } from "./device-verification.js";
 
-type CliConfig = CredentialBackendConfig & { policy?: GraphPolicy };
+type CliConfig = CredentialBackendConfig & { policy?: GraphPolicy; expectedUserPrincipalName?: string };
 type Receipt = { result: string; generation?: number; keyId?: string; digest?: string; binding?: string; timestamp: string };
 type Dependencies = { readPass?: typeof readCredential; writePass?: typeof writePassCredential };
 type CliApi = {

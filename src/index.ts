@@ -72,6 +72,7 @@ const SecretRefOnly = Type.Unsafe<string>({
 
 const Config = Type.Object({
   enabled: Type.Optional(Type.Boolean({ default: false })),
+  expectedUserPrincipalName: Type.Optional(Type.String({ minLength: 3, maxLength: 320, pattern: "^[^@\\s]+@[^@\\s]+$", description: "Fail closed unless Microsoft Graph /me resolves to this exact delegated user principal name or mail address. Account-bound connections also require User.Read." })),
   warningApprovalsRequired: Type.Optional(Type.Boolean({ default: true, description: "Require OpenClaw-native approval for warning-level Microsoft Graph mutations. Missing defaults to true; set false only when policy-authorized warning mutations may proceed without an approval prompt." })),
   directCriticalMutationsAllowed: Type.Optional(Type.Boolean({ default: false, description: "Allow the deterministic Gemacode bridge to execute an exact critical mutation without model dispatch. Missing defaults to false; enable only when signed QEL owner policy is the installation approval authority." })),
   credentialVaultKey: Type.Optional(SecretRefOnly),
@@ -95,7 +96,7 @@ const Config = Type.Object({
   oneDriveTransferTimeoutMs: Type.Optional(Type.Integer({ minimum: 30000, maximum: 7 * 24 * 60 * 60 * 1000, default: DEFAULT_ONEDRIVE_TRANSFER_TIMEOUT_MS, description: "Whole-operation deadline for OneDrive private-media downloads and uploads; each Graph request remains bounded by requestTimeoutMs." })),
 }, { additionalProperties: false });
 
-export type RuntimeConfig = { enabled?: boolean; warningApprovalsRequired?: boolean; directCriticalMutationsAllowed?: boolean; credentialVaultKey?: unknown; nativeBoundaryEnabled?: boolean; nativeBoundaryKey?: unknown; nativeBoundaryAgentId?: string; nativeBoundarySocketPath?: string; nativeExecutionRequired?: boolean; nativeExecutionPublicKey?: unknown; nativeExecutionSocketPath?: string; nativeExecutionSocketOwnerUid?: number; policy?: GraphPolicy; requestTimeoutMs?: number; readOperationTimeoutMs?: number; calendarMultiwriteTimeoutMs?: number; maxConcurrent?: number; maxReadBytes?: number; maxReadOutputBytes?: number; maxAttachmentDownloadBytes?: number; attachmentDownloadTimeoutMs?: number; oneDriveTransferTimeoutMs?: number };
+export type RuntimeConfig = { enabled?: boolean; expectedUserPrincipalName?: string; warningApprovalsRequired?: boolean; directCriticalMutationsAllowed?: boolean; credentialVaultKey?: unknown; nativeBoundaryEnabled?: boolean; nativeBoundaryKey?: unknown; nativeBoundaryAgentId?: string; nativeBoundarySocketPath?: string; nativeExecutionRequired?: boolean; nativeExecutionPublicKey?: unknown; nativeExecutionSocketPath?: string; nativeExecutionSocketOwnerUid?: number; policy?: GraphPolicy; requestTimeoutMs?: number; readOperationTimeoutMs?: number; calendarMultiwriteTimeoutMs?: number; maxConcurrent?: number; maxReadBytes?: number; maxReadOutputBytes?: number; maxAttachmentDownloadBytes?: number; attachmentDownloadTimeoutMs?: number; oneDriveTransferTimeoutMs?: number };
 type OneDriveApprovalRoot = Pick<AllowedRoot, "label" | "drive_id" | "item_id">;
 type Logger = { info: (message: string) => void; warn: (message: string) => void };
 let activeRequests = 0;
@@ -282,6 +283,65 @@ const SCOPES: Record<string, string[]> = {
   todo_read: ["Tasks.Read"], todo_write: ["Tasks.ReadWrite"],
 };
 
+export type MicrosoftAccountIdentity = {
+  id: string;
+  userPrincipalName: string;
+  mail?: string;
+  verifiedAs: string;
+};
+const microsoftAccountIdentityCache = new Map<string, Promise<MicrosoftAccountIdentity>>();
+const MAX_MICROSOFT_ACCOUNT_IDENTITY_CACHE = 128;
+
+function normalizedMicrosoftAccount(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLocaleLowerCase("en-US");
+  return normalized && normalized.length <= 320 ? normalized : undefined;
+}
+
+export async function verifyMicrosoftAccountIdentity(
+  expectedUserPrincipalName: string,
+  token: string,
+  signal: AbortSignal,
+  reader: (token: string, path: string, options: { signal: AbortSignal }) => Promise<any> = graphRequest,
+): Promise<MicrosoftAccountIdentity> {
+  const expected = normalizedMicrosoftAccount(expectedUserPrincipalName);
+  if (!expected || !expected.includes("@")) throw new Error("invalid_expected_user_principal_name");
+  const cacheKey = createHash("sha256").update(`${expected}\0${token}`).digest("base64url");
+  const cached = microsoftAccountIdentityCache.get(cacheKey);
+  if (cached) return cached;
+  const pending = (async () => {
+    const profile = await reader(token, "/me?$select=id,userPrincipalName,mail", { signal });
+    const id = typeof profile?.id === "string" && profile.id.length > 0 && profile.id.length <= 512 ? profile.id : undefined;
+    const userPrincipalName = normalizedMicrosoftAccount(profile?.userPrincipalName);
+    const mail = normalizedMicrosoftAccount(profile?.mail);
+    if (!id || !userPrincipalName) throw new Error("invalid_provider_response");
+    if (expected !== userPrincipalName && expected !== mail) throw new Error("credential_account_mismatch");
+    return { id, userPrincipalName, ...(mail ? { mail } : {}), verifiedAs: expected };
+  })();
+  microsoftAccountIdentityCache.set(cacheKey, pending);
+  while (microsoftAccountIdentityCache.size > MAX_MICROSOFT_ACCOUNT_IDENTITY_CACHE) {
+    const oldest = microsoftAccountIdentityCache.keys().next().value;
+    if (oldest === undefined) break;
+    microsoftAccountIdentityCache.delete(oldest);
+  }
+  try { return await pending; }
+  catch (error) { if (microsoftAccountIdentityCache.get(cacheKey) === pending) microsoftAccountIdentityCache.delete(cacheKey); throw error; }
+}
+
+export function clearMicrosoftAccountIdentityCacheForTests(): void {
+  microsoftAccountIdentityCache.clear();
+}
+
+function attachMicrosoftAccount<T>(value: T, identity: MicrosoftAccountIdentity | undefined): T {
+  if (!identity || !value || typeof value !== "object" || Array.isArray(value) || Buffer.isBuffer(value)) return value;
+  return { ...(value as Record<string, unknown>), microsoftAccount: identity } as T;
+}
+
+async function boundMicrosoftAccount(config: RuntimeConfig, token: string, signal: AbortSignal): Promise<MicrosoftAccountIdentity | undefined> {
+  if (config.expectedUserPrincipalName === undefined) return undefined;
+  return verifyMicrosoftAccountIdentity(config.expectedUserPrincipalName, token, signal);
+}
+
 export function scopesFor(key: keyof typeof SCOPES): string[] { return SCOPES[key]; }
 
 async function withService<T>(config: RuntimeConfig, agentId: string | undefined, service: "calendar" | "mail" | "todo", operation: string, scopeKey: keyof typeof SCOPES, signal: AbortSignal | undefined, action: (token: string, bounded: AbortSignal) => Promise<T>, resource = "me", operationTimeoutMs = operation === "read" ? config.readOperationTimeoutMs ?? DEFAULT_READ_OPERATION_TIMEOUT_MS : config.requestTimeoutMs ?? 5000, beforeCredential?: () => void | Promise<void>) {
@@ -291,8 +351,10 @@ async function withService<T>(config: RuntimeConfig, agentId: string | undefined
     const policy = validatePolicy(config.policy);
     authorizeOperation(policy, agentId, service, operation, resource);
     await beforeCredential?.();
-    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes: SCOPES[scopeKey], signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs: config.requestTimeoutMs ?? 5000 });
-    return action(token, bounded);
+    const identityRequired = config.expectedUserPrincipalName !== undefined;
+    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes: SCOPES[scopeKey], requiredScopes: identityRequired ? ["User.Read"] : [], signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs: config.requestTimeoutMs ?? 5000 });
+    const identity = await boundMicrosoftAccount(config, token, bounded);
+    return attachMicrosoftAccount(await action(token, bounded), identity);
   });
 }
 
@@ -303,8 +365,10 @@ async function withCalendarMultiwrite<T>(config: RuntimeConfig, agentId: string 
   return withConcurrency(config.maxConcurrent ?? 4, async () => {
     const policy = validatePolicy(config.policy);
     for (const authorization of authorizations) authorizeOperation(policy, agentId, "calendar", authorization.operation, authorization.resource);
-    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes: SCOPES.calendar_write, signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs });
-    return action(token, bounded);
+    const identityRequired = config.expectedUserPrincipalName !== undefined;
+    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes: SCOPES.calendar_write, requiredScopes: identityRequired ? ["User.Read"] : [], signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs });
+    const identity = await boundMicrosoftAccount(config, token, bounded);
+    return attachMicrosoftAccount(await action(token, bounded), identity);
   });
 }
 
@@ -317,8 +381,10 @@ async function withDrive<T>(config: RuntimeConfig, agentId: string | undefined, 
     const root = authorizeRoot(policy, agentId, rootLabel, operation);
     await beforeCredential?.(root);
     const allowedScopes = SCOPES[operation === "read" ? "onedrive_read" : "onedrive_write"];
-    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes, signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs });
-    return action(root, token, bounded);
+    const identityRequired = config.expectedUserPrincipalName !== undefined;
+    const token = await tokenForAuthorizedOperation({ config, policy, allowedScopes, requiredScopes: identityRequired ? ["User.Read"] : [], signal: bounded, stateDir: stateDirForVault(), requestTimeoutMs });
+    const identity = await boundMicrosoftAccount(config, token, bounded);
+    return attachMicrosoftAccount(await action(root, token, bounded), identity);
   });
 }
 

@@ -25,13 +25,19 @@ async function oauthPost(url: string, body: URLSearchParams, fetchFn: typeof fet
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("device_authorization_failed");
   return { status: response.status, value: value as Record<string, unknown> };
 }
-function checkedScopes(policy: GraphPolicy): string[] { return [...new Set([...requiredPolicyScopes(validatePolicy(policy)), "offline_access"])].sort(); }
+function checkedScopes(policy: GraphPolicy, accountBindingRequired: boolean): string[] {
+  return [...new Set([
+    ...requiredPolicyScopes(validatePolicy(policy)),
+    ...(accountBindingRequired ? ["User.Read"] : []),
+    "offline_access",
+  ])].sort();
+}
 function endpoint(tenant: string, suffix: string): string { return `https://login.microsoftonline.com/${encodeURIComponent(tenant)}/oauth2/v2.0/${suffix}`; }
 
 export class DeviceCodeSignIn {
   private session?: DeviceSession;
   private starting = false;
-  constructor(private readonly config: { policy?: GraphPolicy; credentialVaultKey?: unknown }, private readonly stateDir: () => string, private readonly fetchFn: typeof fetch = fetch, private readonly wait: (ms: number) => Promise<void> = sleep) {}
+  constructor(private readonly config: { policy?: GraphPolicy; credentialVaultKey?: unknown; expectedUserPrincipalName?: string }, private readonly stateDir: () => string, private readonly fetchFn: typeof fetch = fetch, private readonly wait: (ms: number) => Promise<void> = sleep) {}
 
   async start(clientId: string, tenant: string): Promise<StartResult> {
     if (!SAFE_CLIENT.test(clientId) || !SAFE_TENANT.test(tenant) || tenant.includes("..")) throw new Error("invalid_rpc_parameters");
@@ -46,7 +52,7 @@ export class DeviceCodeSignIn {
       if (typeof key !== "string") throw new Error("credential_vault_unavailable");
       decodeVaultKey(key);
       const policy = validatePolicy(this.config.policy);
-      const scopes = checkedScopes(policy);
+      const scopes = checkedScopes(policy, typeof this.config.expectedUserPrincipalName === "string");
       if (scopes.length < 2) throw new Error("invalid_policy");
       if ((await inspectVaultCredential(this.stateDir(), key)).result !== "missing") throw new Error("credential_vault_conflict");
       const result = await oauthPost(endpoint(tenant, "devicecode"), new URLSearchParams({ client_id: clientId, scope: scopes.join(" ") }), this.fetchFn);

@@ -291,6 +291,7 @@ export async function tokenForAuthorizedOperation(params: {
   config: CredentialBackendConfig;
   policy: GraphPolicy;
   allowedScopes: string[];
+  requiredScopes?: string[];
   signal?: AbortSignal;
   stateDir?: string;
   requestTimeoutMs?: number;
@@ -307,9 +308,11 @@ export async function tokenForAuthorizedOperation(params: {
     stateDir: params.stateDir, key, signal: params.signal,
     exchange: async (credential, binding) => {
       const scope = selectScope(credential, params.allowedScopes);
+      const required = (params.requiredScopes ?? []).map((requiredScope) => selectScope(credential, [requiredScope]));
+      const requestedScopes = [...new Set([scope, ...required])];
       exchangedCredential = credential;
-      exchangedScopes = [scope];
-      return exchangeRefreshTokenDetailed(credential, [scope], params.signal, params.fetchFn ?? fetch, {
+      exchangedScopes = requestedScopes;
+      return exchangeRefreshTokenDetailed(credential, requestedScopes, params.signal, params.fetchFn ?? fetch, {
         requestTimeoutMs: params.requestTimeoutMs,
         transactionalCacheIdentity: vaultCacheIdentity(binding),
         quarantineOnTransportFailure: true,

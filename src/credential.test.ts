@@ -40,6 +40,17 @@ describe("Gateway credential handling", () => {
     expect(new URLSearchParams(requested).get("scope")).toBe("Files.Read");
   });
 
+  it("requests the operation scope together with the account-binding scope", async () => {
+    const credential = parseCredential(JSON.stringify({ clientId: "client", refreshToken: "refresh", scopes: ["Files.Read", "User.Read"] }));
+    let requested = "";
+    const fetchFn = async (_url: string | URL | Request, init?: RequestInit) => {
+      requested = String(init?.body);
+      return new Response(JSON.stringify({ access_token: "account-bound-token", expires_in: 3600 }), { status: 200 });
+    };
+    await expect(exchangeRefreshToken(credential, ["Files.Read", "User.Read"], undefined, fetchFn as typeof fetch)).resolves.toBe("account-bound-token");
+    expect(new URLSearchParams(requested).get("scope")).toBe("Files.Read User.Read");
+  });
+
   it("rejects oversized OAuth responses", async () => {
     const credential = parseCredential(JSON.stringify({ clientId: "client", refreshToken: "refresh", scopes: ["Files.Read"] }));
     const fetchFn = async () => new Response("x", { status: 200, headers: { "content-length": "65537" } });

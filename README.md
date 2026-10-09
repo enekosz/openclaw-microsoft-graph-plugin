@@ -37,6 +37,8 @@ Create the vault-key SecretRef and a default-deny policy for named agents. Begin
 
 The [detailed configuration guide](#configuration-reference) has the exact key command, policy example, host configuration, and sign-in steps. This plugin uses delegated access for one signed-in user; it does not support application permissions, client secrets, or unattended service-principal access.
 
+Set `expectedUserPrincipalName` when an installation must be bound to one exact Microsoft identity. The connector then requests `User.Read`, verifies Microsoft Graph `/me` before admitting each service, caches that verification per access token, includes the verified account in successful results, and fails closed with `credential_account_mismatch` if a different account signs in.
+
 ### 3. Verify your first request
 
 Wait until the Control UI confirms that the Gateway has applied your rules. Run the [local checks](#validate-the-setup), then ask an explicitly allowed agent for one read-only item within its grant. Confirm that an ungranted agent or resource is denied. A visible installed-plugin entry alone does not prove the running Gateway can serve the request.
@@ -65,6 +67,7 @@ Configure a second SecretRef (never reuse `credentialVaultKey`) and an absolute 
 
 ```json5
 nativeBoundaryEnabled: true,
+expectedUserPrincipalName: "person@example.com",
 nativeBoundaryKey: {
   source: "store",
   provider: "default",
