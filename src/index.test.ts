@@ -82,6 +82,12 @@ describe("microsoft-graph plugin contract", () => {
       agentId: "main",
       params: { limit: 51 },
     })).rejects.toThrow("invalid_compact_read_request");
+    await expect(executeCompactMicrosoftRead({} as any, {
+      toolCallId: "compact-4",
+      toolName: "microsoft_todo_read",
+      agentId: "main",
+      params: { action: "list_tasks" },
+    })).rejects.toThrow("invalid_compact_read_request");
   });
 
   it("requires an explicit non-interactive policy for compact mutations", async () => {

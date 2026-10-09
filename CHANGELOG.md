@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## 3.12.3 - 2026-10-09
+
+- Add the bounded `list_lists` Microsoft To Do operation to the versioned
+  compact read bridge so explicit list discovery can execute before transcript
+  loading while retaining account binding and the Native execution permit.
+
 ## 3.12.2 - 2026-10-09
 
 - Add optional `expectedUserPrincipalName` account binding. Bound installations
