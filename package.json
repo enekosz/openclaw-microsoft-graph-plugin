@@ -101,7 +101,7 @@
     },
     "install": {
       "clawhubSpec": "clawhub:@baumus/openclaw-microsoft-graph",
-      "npmSpec": "@baumus/openclaw-microsoft-graph@3.12.1",
+      "npmSpec": "@baumus/openclaw-microsoft-graph@3.12.2",
       "defaultChoice": "clawhub",
       "minHostVersion": ">=2026.9.6"
     },
