@@ -51,7 +51,7 @@ export const COMPACT_READ_BRIDGE_PROTOCOL = "gemacode-microsoft-graph-compact-re
 export const COMPACT_OPERATION_BRIDGE_KEY = Symbol.for("gemacode/microsoft-graph-compact-operation/4");
 export const COMPACT_OPERATION_BRIDGE_PROTOCOL = "gemacode-microsoft-graph-compact-operation/4";
 
-type CompactReadToolName = "onedrive_root_list" | "outlook_calendar_day_read" | "microsoft_todo_overview_read" | "microsoft_todo_read";
+type CompactReadToolName = "onedrive_root_list" | "outlook_calendar_day_read" | "microsoft_todo_overview_read" | "microsoft_todo_read" | "outlook_mail_read";
 type CompactMutationToolName = "microsoft_todo_default_task_create" | "outlook_calendar_event_create" | "microsoft_todo_task_delete_exact" | "outlook_calendar_event_delete_exact";
 type CompactOperationToolName = CompactReadToolName | CompactMutationToolName;
 type CompactOperationBridge = {
@@ -806,13 +806,21 @@ export async function executeCompactMicrosoftRead(
     request.toolName === "outlook_calendar_day_read" ? ["date", "timeZone"]
       : request.toolName === "microsoft_todo_overview_read" ? ["limit", "includeCompleted"]
         : request.toolName === "microsoft_todo_read" ? ["action", "limit"]
-        : request.toolName === "onedrive_root_list" ? ["limit"] : [],
+        : request.toolName === "outlook_mail_read" ? ["action", "folder", "isRead", "orderBy", "orderDirection", "includeBody", "limit"]
+          : request.toolName === "onedrive_root_list" ? ["limit"] : [],
   );
   if (request.toolName === "outlook_calendar_day_read" && (typeof params.date !== "string" || (params.timeZone !== undefined && typeof params.timeZone !== "string"))) throw new Error("invalid_compact_read_request");
   if ((request.toolName === "microsoft_todo_read" || request.toolName === "microsoft_todo_overview_read" || request.toolName === "onedrive_root_list") && params.limit !== undefined && (!Number.isSafeInteger(params.limit) || Number(params.limit) < 1 || Number(params.limit) > MAX_RESULTS)) throw new Error("invalid_compact_read_request");
   if (request.toolName === "microsoft_todo_read" && params.action !== "list_lists") throw new Error("invalid_compact_read_request");
   if (request.toolName === "microsoft_todo_overview_read" && params.includeCompleted !== undefined && typeof params.includeCompleted !== "boolean") throw new Error("invalid_compact_read_request");
-  if (!new Set<CompactReadToolName>(["outlook_calendar_day_read", "microsoft_todo_read", "microsoft_todo_overview_read", "onedrive_root_list"]).has(request.toolName)) throw new Error("unsupported_compact_read_tool");
+  if (request.toolName === "outlook_mail_read" && (
+    params.action !== "list_messages" || params.folder !== "inbox"
+    || (params.isRead !== undefined && params.isRead !== false)
+    || params.orderBy !== "receivedDateTime" || params.orderDirection !== "desc"
+    || params.includeBody !== false || !Number.isSafeInteger(params.limit)
+    || Number(params.limit) < 1 || Number(params.limit) > 25
+  )) throw new Error("invalid_compact_read_request");
+  if (!new Set<CompactReadToolName>(["outlook_calendar_day_read", "microsoft_todo_read", "microsoft_todo_overview_read", "onedrive_root_list", "outlook_mail_read"]).has(request.toolName)) throw new Error("unsupported_compact_read_tool");
 
   const permit = await consumeNativeExecutionPermit(config, request.toolName, request.toolCallId, params);
   let value: unknown;
@@ -823,7 +831,9 @@ export async function executeCompactMicrosoftRead(
         ? await todoRead(config, request.agentId, { action: "list_lists", ...(params.limit === undefined ? {} : { limit: params.limit }) }, request.signal)
       : request.toolName === "microsoft_todo_overview_read"
         ? await todoOverviewRead(config, request.agentId, params, request.signal)
-        : await oneDriveRootList(config, request.agentId, params.limit, request.signal);
+        : request.toolName === "outlook_mail_read"
+          ? { ...await mailRead(config, request.agentId, params, request.signal), mailboxQuery: { ...params } }
+          : await oneDriveRootList(config, request.agentId, params.limit, request.signal);
   } catch (error) {
     if (permit) await completeNativeExecutionPermit(config, permit, {
       ok: false,

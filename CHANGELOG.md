@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 3.12.4 - 2026-10-10
+
+- Add closed inbox-only `outlook_mail_read` to the compact bridge: latest or
+  unread messages, descending received date, maximum 25 results, no bodies,
+  attachments, mutations or arbitrary filters.
+- Retain account binding, default-deny policy and Native execution permits;
+  return the exact query scope and continuation/truncation evidence.
+
 ## 3.12.3 - 2026-10-09
 
 - Add the bounded `list_lists` Microsoft To Do operation to the versioned
